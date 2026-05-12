@@ -1,0 +1,29 @@
+services:
+  backend:
+    build: .
+    container_name: sadinov-backend
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      # SQLite ma'lumotlari konteyner restart'ida ham saqlanadi
+      - ./data:/app/data
+      # Admin token cache (filebased) — workerlar orasida bo'lishadi
+      - ./cache:/app/cache
+      # Yuklangan rasmlar (admin upload)
+      - ./media:/app/media
+    environment:
+      DJANGO_DEBUG: "0"
+      DJANGO_CACHE_DIR: "/app/cache"
+      DJANGO_SECRET_KEY: "${DJANGO_SECRET_KEY:-change-me-in-production}"
+      FERNET_KEY: "${FERNET_KEY:-}"
+      ESKIZ_EMAIL: "${ESKIZ_EMAIL:-}"
+      ESKIZ_PASSWORD: "${ESKIZ_PASSWORD:-}"
+      ESKIZ_FROM: "${ESKIZ_FROM:-4546}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
