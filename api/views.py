@@ -503,15 +503,31 @@ def admin_stats(request):
         revenue = cur.fetchone()[0] or 0
         cur.execute("SELECT COUNT(*) FROM orders WHERE status = 'pending'")
         pending = cur.fetchone()[0] or 0
+        users_count = c("users")
+        products_count = c("products")
+        services_count = c("services")
+        categories_count = c("categories")
+        banners_count = c("banners")
+        orders_count = c("orders")
+        favorites_count = c("favorites")
         return Response({
-            "users": c("users"),
-            "products": c("products"),
-            "services": c("services"),
-            "categories": c("categories"),
-            "banners": c("banners"),
-            "orders": c("orders"),
+            "total_users": users_count,
+            "total_products": products_count,
+            "total_services": services_count,
+            "total_categories": categories_count,
+            "total_banners": banners_count,
+            "total_orders": orders_count,
+            "pending_orders": pending,
+            "total_favorites": favorites_count,
+            "total_revenue": revenue,
+            "users": users_count,
+            "products": products_count,
+            "services": services_count,
+            "categories": categories_count,
+            "banners": banners_count,
+            "orders": orders_count,
             "orders_pending": pending,
-            "favorites": c("favorites"),
+            "favorites": favorites_count,
             "revenue": revenue,
         })
 
