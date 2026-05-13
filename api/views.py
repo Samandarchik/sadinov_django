@@ -559,7 +559,7 @@ def admin_orders(request):
 def admin_order_status(request, pk: str):
     require_admin(request)
     new_status = (request.data.get("status") or "").strip()
-    if new_status not in {"pending", "in_progress", "delivered", "cancelled"}:
+    if new_status not in {"pending", "confirmed", "in_progress", "delivered", "cancelled"}:
         raise ValidationError("Noto'g'ri status")
     try:
         o = Order.objects.get(pk=pk)
