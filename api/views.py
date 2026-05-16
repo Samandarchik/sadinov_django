@@ -239,6 +239,12 @@ def service_detail(request, pk: int):
 PHONE_RE = re.compile(r"^\+998\d{9}$")
 CODE_TTL_MINUTES = 5
 
+# App Store / Play Store reviewer demo account.
+# Phone: 00 000 00 00, code: 000 000.
+DEMO_PHONE = "+998000000000"
+DEMO_CODE = "000000"
+DEMO_NAME = "App Reviewer"
+
 
 def _normalize_phone(raw: str) -> str:
     p = (raw or "").strip().replace(" ", "")
@@ -252,7 +258,8 @@ def _normalize_phone(raw: str) -> str:
 @api_view(["POST"])
 def auth_send_sms(request):
     phone = _normalize_phone(request.data.get("phone", ""))
-    code = f"{secrets.randbelow(900000) + 100000:06d}"
+    is_demo = phone == DEMO_PHONE
+    code = DEMO_CODE if is_demo else f"{secrets.randbelow(900000) + 100000:06d}"
     phone_h = hash_phone(phone)
     with connection.cursor() as cur:
         cur.execute(
@@ -262,6 +269,8 @@ def auth_send_sms(request):
                                               created_at = datetime('now')""",
             [phone_h, encrypt(code)],
         )
+    if is_demo:
+        return Response({"message": "SMS yuborildi"})
     if not eskiz_send_sms(phone, code):
         return Response({"detail": "SMS yuborilmadi"}, status=500)
     return Response({"message": "SMS yuborildi"})
@@ -287,6 +296,15 @@ def auth_verify_code(request):
         raise ValidationError("Noto'g'ri kod kiritildi")
 
     user = User.objects.filter(phone_hash=phone_h).first()
+    if not user and phone == DEMO_PHONE:
+        # Reviewer demo account — auto-create so no name step is required.
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        user = User.objects.create(
+            name=DEMO_NAME,
+            phone=encrypt(phone),
+            phone_hash=phone_h,
+            created_at=now,
+        )
     if user:
         raw = secrets.token_urlsafe(32)
         user.auth_token = hash_token(raw)
