@@ -8,6 +8,8 @@ class Banner(models.Model):
     image_uz = models.TextField()
     image_ru = models.TextField()
     position = models.IntegerField(default=0)
+    # Banner bosilganda ochiladigan mahsulot (ixtiyoriy).
+    product_id = models.IntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "banners"
@@ -35,6 +37,8 @@ class Product(models.Model):
     description_uz = models.TextField(null=True, blank=True)
     description_ru = models.TextField(null=True, blank=True)
     price = models.IntegerField()
+    # Aksiya: eski (chizib tashlanadigan) narx. price esa hozirgi/aksiya narxi.
+    old_price = models.IntegerField(null=True, blank=True)
     currency = models.TextField(default="UZS")
     images = models.TextField(default="[]")
     sizes = models.TextField(default="[]")

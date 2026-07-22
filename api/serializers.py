@@ -15,12 +15,20 @@ def _loads(value, default=None):
         return default if default is not None else []
 
 
+def _discount_percent(price, old_price):
+    """Aksiya foizi; aksiya bo'lmasa None."""
+    if not old_price or not price or old_price <= price:
+        return None
+    return round((old_price - price) * 100 / old_price)
+
+
 def banner_to_dict(b) -> dict:
     return {
         "id": b.id,
         "image_uz": b.image_uz,
         "image_ru": b.image_ru,
         "position": b.position,
+        "product_id": b.product_id,
     }
 
 
@@ -44,6 +52,8 @@ def product_to_dict(p) -> dict:
         "description_uz": p.description_uz,
         "description_ru": p.description_ru,
         "price": p.price,
+        "old_price": p.old_price,
+        "discount_percent": _discount_percent(p.price, p.old_price),
         "currency": p.currency,
         "images": _loads(p.images),
         "sizes": _loads(p.sizes),
@@ -67,6 +77,8 @@ def product_summary_to_dict(p) -> dict:
         "category_id": p.category_id,
         "category_name": p.category_name,
         "price": p.price,
+        "old_price": p.old_price,
+        "discount_percent": _discount_percent(p.price, p.old_price),
         "currency": p.currency,
         "images": _loads(p.images),
         "in_stock": bool(p.in_stock),

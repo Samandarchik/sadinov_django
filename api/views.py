@@ -43,6 +43,17 @@ from .serializers import (
 # --- Banners ---
 
 
+def _positive_int_or_none(raw):
+    """Bo'sh / 0 / noto'g'ri qiymatni None ga aylantiradi."""
+    if raw in (None, "", 0, "0"):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 @api_view(["GET", "POST"])
 def banners_list(request):
     if request.method == "GET":
@@ -52,6 +63,7 @@ def banners_list(request):
         image_uz=data.get("image_uz", ""),
         image_ru=data.get("image_ru", ""),
         position=data.get("position", 0),
+        product_id=_positive_int_or_none(data.get("product_id")),
     )
     return Response(banner_to_dict(b), status=201)
 
@@ -70,6 +82,8 @@ def banner_detail(request, pk: int):
     for f in ("image_uz", "image_ru", "position"):
         if f in request.data:
             setattr(b, f, request.data[f])
+    if "product_id" in request.data:
+        b.product_id = _positive_int_or_none(request.data["product_id"])
     b.save()
     return Response(banner_to_dict(b))
 
@@ -121,6 +135,10 @@ def _apply_product_fields(p, data):
     ]:
         if f in data:
             setattr(p, f, data[f])
+    if "old_price" in data:
+        # Aksiya: eski narx faqat hozirgi narxdan katta bo'lsa saqlanadi.
+        old = _positive_int_or_none(data["old_price"])
+        p.old_price = old if old and old > (p.price or 0) else None
     if "in_stock" in data:
         p.in_stock = 1 if data["in_stock"] else 0
     if "images" in data:
