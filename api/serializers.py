@@ -29,6 +29,7 @@ def banner_to_dict(b) -> dict:
         "image_ru": b.image_ru,
         "position": b.position,
         "product_id": b.product_id,
+        "is_sale": bool(b.is_sale),
     }
 
 
@@ -113,6 +114,22 @@ def user_to_dict(u) -> dict:
     }
 
 
+def promo_code_to_dict(p) -> dict:
+    return {
+        "id": p.id,
+        "code": p.code,
+        "discount_type": p.discount_type,
+        "discount_value": p.discount_value,
+        "min_order": p.min_order,
+        "max_discount": p.max_discount,
+        "usage_limit": p.usage_limit,
+        "used_count": p.used_count or 0,
+        "active": bool(p.active),
+        "expires_at": p.expires_at,
+        "created_at": p.created_at,
+    }
+
+
 def order_to_dict(o, user_name: str | None = None, user_phone: str | None = None) -> dict:
     d = {
         "id": o.id,
@@ -124,6 +141,8 @@ def order_to_dict(o, user_name: str | None = None, user_phone: str | None = None
         "address": o.address,
         "comment": o.comment,
         "price": o.price,
+        "promo_code": getattr(o, "promo_code", None),
+        "discount": getattr(o, "discount", 0) or 0,
         "status": o.status,
         "created_at": o.created_at,
     }

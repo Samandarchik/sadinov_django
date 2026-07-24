@@ -26,6 +26,7 @@ from .models import (
     Order,
     PhoneVerification,
     Product,
+    PromoCode,
     Service,
     User,
 )
@@ -35,6 +36,7 @@ from .serializers import (
     order_to_dict,
     product_summary_to_dict,
     product_to_dict,
+    promo_code_to_dict,
     service_to_dict,
     user_to_dict,
 )
@@ -54,6 +56,15 @@ def _positive_int_or_none(raw):
     return value if value > 0 else None
 
 
+def _to_bool(raw, default=True):
+    """`false` / `0` / `""` — o'chirilgan, qolgani yoqilgan deb qaraladi."""
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        return raw.strip().lower() not in ("", "0", "false", "no")
+    return bool(raw)
+
+
 @api_view(["GET", "POST"])
 def banners_list(request):
     if request.method == "GET":
@@ -64,6 +75,7 @@ def banners_list(request):
         image_ru=data.get("image_ru", ""),
         position=data.get("position", 0),
         product_id=_positive_int_or_none(data.get("product_id")),
+        is_sale=int(_to_bool(data.get("is_sale"))),
     )
     return Response(banner_to_dict(b), status=201)
 
@@ -84,6 +96,8 @@ def banner_detail(request, pk: int):
             setattr(b, f, request.data[f])
     if "product_id" in request.data:
         b.product_id = _positive_int_or_none(request.data["product_id"])
+    if "is_sale" in request.data:
+        b.is_sale = int(_to_bool(request.data["is_sale"]))
     b.save()
     return Response(banner_to_dict(b))
 
@@ -157,6 +171,10 @@ def products_list(request):
             qs = qs.filter(category_id=int(cat))
         if in_stock is not None:
             qs = qs.filter(in_stock=1 if in_stock.lower() == "true" else 0)
+        # shuffle=true: har so'rovda tasodifiy tartib (bosh sahifadagi
+        # "Ommabop mahsulotlar" har safar har xil chiqishi uchun).
+        if (request.query_params.get("shuffle") or "").lower() == "true":
+            qs = qs.order_by("?")
         return Response([product_to_dict(p) for p in qs])
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     p = Product(
@@ -174,20 +192,84 @@ def products_list(request):
 
 @api_view(["GET"])
 def products_search(request):
+    """Qidiruv — 30 tadan sahifalab qaytaradi.
+
+    `limit`/`offset` bilan cheksiz skroll qilinadi. Javob shakli:
+    `{"results": [...], "total": n, "limit": .., "offset": .., "has_more": bool}`.
+    """
     q = (request.query_params.get("q") or "").strip().lower()
     cat = request.query_params.get("category_id")
+
+    try:
+        limit = int(request.query_params.get("limit") or 30)
+    except ValueError:
+        limit = 30
+    try:
+        offset = int(request.query_params.get("offset") or 0)
+    except ValueError:
+        offset = 0
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+
     qs = Product.objects.all()
     if cat:
         qs = qs.filter(category_id=int(cat))
     if q:
-        qs = qs.extra(where=["LOWER(name) LIKE %s"], params=[f"%{q}%"])
-    return Response([product_to_dict(p) for p in qs])
+        # name, name_uz, name_ru — uchalasi bo'yicha ham qidiramiz.
+        like = f"%{q}%"
+        qs = qs.extra(
+            where=[
+                "(LOWER(name) LIKE %s"
+                " OR LOWER(COALESCE(name_uz, '')) LIKE %s"
+                " OR LOWER(COALESCE(name_ru, '')) LIKE %s)"
+            ],
+            params=[like, like, like],
+        )
+    qs = qs.order_by("position", "id")
+
+    total = qs.count()
+    page = qs[offset:offset + limit]
+    return Response({
+        "results": [product_to_dict(p) for p in page],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + limit < total,
+    })
 
 
 @api_view(["GET"])
 def products_names_all(request):
     qs = Product.objects.all().order_by("name")
     return Response([product_summary_to_dict(p) for p in qs])
+
+
+@api_view(["GET"])
+def products_names(request):
+    """Autocomplete uchun yengil ro'yxat — faqat id va nomlar.
+
+    `?q=` berilsa server tomonda ham filtrlanadi, aks holda hammasi
+    qaytadi (mijoz yozayotganda lokal filtrlash uchun).
+    """
+    qs = Product.objects.all()
+    cat = request.query_params.get("category_id")
+    if cat:
+        qs = qs.filter(category_id=int(cat))
+    q = (request.query_params.get("q") or "").strip().lower()
+    if q:
+        like = f"%{q}%"
+        qs = qs.extra(
+            where=[
+                "(LOWER(name) LIKE %s"
+                " OR LOWER(COALESCE(name_uz, '')) LIKE %s"
+                " OR LOWER(COALESCE(name_ru, '')) LIKE %s)"
+            ],
+            params=[like, like, like],
+        )
+    rows = qs.order_by("name").values(
+        "id", "name", "name_uz", "name_ru", "category_id", "category_name"
+    )
+    return Response(list(rows))
 
 
 @api_view(["GET", "PUT", "DELETE"])
@@ -372,6 +454,150 @@ def auth_logout(request):
     return Response({"message": "Tizimdan chiqdingiz"})
 
 
+# --- Promo codes ---
+
+VALID_DISCOUNT_TYPES = {"percent", "fixed"}
+
+
+def _normalize_code(raw: str) -> str:
+    return (raw or "").strip().upper()
+
+
+def _parse_expiry(raw):
+    """`expires_at` matnini datetime'ga aylantiradi; faqat sana bo'lsa — kun oxiri."""
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        if len(s) == 10:  # YYYY-MM-DD — o'sha kun oxirigacha amal qiladi
+            return datetime.fromisoformat(s) + timedelta(
+                hours=23, minutes=59, seconds=59
+            )
+        return datetime.fromisoformat(s.replace("T", " "))
+    except ValueError:
+        return None
+
+
+def _promo_discount(promo, subtotal: int) -> int:
+    """Promo turi bo'yicha chegirma summasini (so'm) hisoblaydi."""
+    if promo.discount_type == "fixed":
+        discount = promo.discount_value or 0
+    else:  # percent
+        discount = (subtotal * (promo.discount_value or 0)) // 100
+        if promo.max_discount:
+            discount = min(discount, promo.max_discount)
+    return max(0, min(discount, subtotal))
+
+
+def _evaluate_promo(code_raw: str, subtotal: int):
+    """Promo kodni tekshiradi. `(promo, discount, None)` yoki `(None, 0, xato)`."""
+    code = _normalize_code(code_raw)
+    if not code:
+        return None, 0, "Promo kod kiritilmadi"
+    promo = PromoCode.objects.filter(code=code).first()
+    if not promo:
+        return None, 0, "Promo kod topilmadi"
+    if not promo.active:
+        return None, 0, "Promo kod faol emas"
+    expiry = _parse_expiry(promo.expires_at)
+    if expiry and datetime.utcnow() > expiry:
+        return None, 0, "Promo kod muddati tugagan"
+    if promo.usage_limit is not None and (promo.used_count or 0) >= promo.usage_limit:
+        return None, 0, "Promo kod ishlatish limiti tugagan"
+    if subtotal < (promo.min_order or 0):
+        need = f"{promo.min_order:,}".replace(",", " ")
+        return None, 0, f"Buyurtma summasi kamida {need} so'm bo'lishi kerak"
+    discount = _promo_discount(promo, subtotal)
+    if discount <= 0:
+        return None, 0, "Bu promo kod chegirma bermaydi"
+    return promo, discount, None
+
+
+@api_view(["POST"])
+def promo_validate(request):
+    """Mijoz promo kodni checkout oldidan tekshiradi (used_count o'zgarmaydi)."""
+    subtotal = _positive_int_or_none(request.data.get("subtotal")) or 0
+    promo, discount, err = _evaluate_promo(request.data.get("code", ""), subtotal)
+    if err:
+        return Response({"valid": False, "detail": err}, status=400)
+    return Response({
+        "valid": True,
+        "code": promo.code,
+        "discount_type": promo.discount_type,
+        "discount_value": promo.discount_value,
+        "discount": discount,
+        "subtotal": subtotal,
+        "final_price": max(0, subtotal - discount),
+    })
+
+
+def _apply_promo_fields(p, data):
+    if "code" in data:
+        p.code = _normalize_code(data["code"])
+    if "discount_type" in data:
+        dt = (data["discount_type"] or "").strip().lower()
+        p.discount_type = dt if dt in VALID_DISCOUNT_TYPES else "percent"
+    if "discount_value" in data:
+        try:
+            p.discount_value = max(0, int(data["discount_value"] or 0))
+        except (TypeError, ValueError):
+            p.discount_value = 0
+    if "min_order" in data:
+        p.min_order = _positive_int_or_none(data["min_order"]) or 0
+    if "max_discount" in data:
+        p.max_discount = _positive_int_or_none(data["max_discount"])
+    if "usage_limit" in data:
+        p.usage_limit = _positive_int_or_none(data["usage_limit"])
+    if "active" in data:
+        p.active = int(_to_bool(data["active"]))
+    if "expires_at" in data:
+        p.expires_at = (data.get("expires_at") or "").strip() or None
+
+
+def _validate_promo_payload(p):
+    if not p.code:
+        raise ValidationError("Promo kod matni kiritilmadi")
+    if (p.discount_value or 0) <= 0:
+        raise ValidationError("Chegirma qiymati 0 dan katta bo'lishi kerak")
+    if p.discount_type == "percent" and p.discount_value > 100:
+        raise ValidationError("Foizli chegirma 100% dan oshmasligi kerak")
+
+
+@api_view(["GET", "POST"])
+def admin_promo_codes(request):
+    require_admin(request)
+    if request.method == "GET":
+        return Response([promo_code_to_dict(p) for p in PromoCode.objects.all()])
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    p = PromoCode(discount_type="percent", used_count=0, active=1, created_at=now)
+    _apply_promo_fields(p, request.data)
+    _validate_promo_payload(p)
+    if PromoCode.objects.filter(code=p.code).exists():
+        raise ValidationError("Bu promo kod allaqachon mavjud")
+    p.save()
+    return Response(promo_code_to_dict(p), status=201)
+
+
+@api_view(["GET", "PUT", "DELETE"])
+def admin_promo_code_detail(request, pk: int):
+    require_admin(request)
+    try:
+        p = PromoCode.objects.get(pk=pk)
+    except PromoCode.DoesNotExist:
+        raise NotFound("Promo kod topilmadi")
+    if request.method == "GET":
+        return Response(promo_code_to_dict(p))
+    if request.method == "DELETE":
+        p.delete()
+        return Response({"message": "Promo kod o'chirildi"})
+    _apply_promo_fields(p, request.data)
+    _validate_promo_payload(p)
+    if PromoCode.objects.filter(code=p.code).exclude(pk=p.pk).exists():
+        raise ValidationError("Bu promo kod allaqachon mavjud")
+    p.save()
+    return Response(promo_code_to_dict(p))
+
+
 # --- Orders ---
 
 
@@ -397,6 +623,28 @@ def orders_list(request):
     for sid in service_ids:
         if not Service.objects.filter(pk=sid).exists():
             raise ValidationError(f"Xizmat {sid} topilmadi")
+
+    # Buyurtma summasi. Mahsulotlar bo'lsa serverda qayta hisoblanadi
+    # (mijoz yuborgan narxga to'liq ishonmaslik uchun).
+    subtotal = int(request.data.get("price") or 0)
+    if items and not service_ids:
+        item_total = sum(
+            int(it.get("unit_price") or 0) * int(it.get("quantity") or 0)
+            for it in items
+        )
+        if item_total > 0:
+            subtotal = item_total
+
+    # Promo kod (ixtiyoriy) — chegirma serverda hisoblanadi.
+    promo = None
+    discount = 0
+    promo_code_raw = request.data.get("promo_code")
+    if promo_code_raw:
+        promo, discount, err = _evaluate_promo(promo_code_raw, subtotal)
+        if err:
+            return Response({"detail": err}, status=400)
+    final_price = max(0, subtotal - discount)
+
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     o = Order.objects.create(
         id=_generate_order_id(),
@@ -407,10 +655,18 @@ def orders_list(request):
         latitude=request.data.get("latitude"),
         address=request.data.get("address"),
         comment=request.data.get("comment"),
-        price=request.data.get("price", 0),
+        price=final_price,
+        promo_code=promo.code if promo else None,
+        discount=discount,
         status="pending",
         created_at=now,
     )
+    if promo:
+        with connection.cursor() as cur:
+            cur.execute(
+                "UPDATE promo_codes SET used_count = used_count + 1 WHERE id = %s",
+                [promo.id],
+            )
     return Response(order_to_dict(o), status=201)
 
 

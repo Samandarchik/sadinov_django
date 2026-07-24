@@ -10,6 +10,8 @@ class Banner(models.Model):
     position = models.IntegerField(default=0)
     # Banner bosilganda ochiladigan mahsulot (ixtiyoriy).
     product_id = models.IntegerField(null=True, blank=True)
+    # Banner ustida "AKSIYA" belgisi ko'rsatiladimi.
+    is_sale = models.IntegerField(default=1)
 
     class Meta:
         db_table = "banners"
@@ -109,6 +111,9 @@ class Order(models.Model):
     address = models.TextField(null=True, blank=True)
     comment = models.TextField(null=True, blank=True)
     price = models.IntegerField()
+    # Qo'llanilgan promo kod va u bergan chegirma (so'm). Promo yo'q bo'lsa 0.
+    promo_code = models.TextField(null=True, blank=True)
+    discount = models.IntegerField(default=0)
     status = models.TextField(default="pending")
     created_at = models.TextField()
 
@@ -126,3 +131,28 @@ class Favorite(models.Model):
     class Meta:
         db_table = "favorites"
         managed = False
+
+
+class PromoCode(models.Model):
+    # Kod harflar bilan katta holatda saqlanadi (masalan "SADINOV10").
+    code = models.TextField(unique=True)
+    # "percent" — foizli chegirma; "fixed" — qat'iy summa (so'm).
+    discount_type = models.TextField(default="percent")
+    # percent uchun 1..100, fixed uchun so'm miqdori.
+    discount_value = models.IntegerField(default=0)
+    # Chegirma qo'llanishi uchun buyurtmaning minimal summasi.
+    min_order = models.IntegerField(default=0)
+    # Foizli chegirma uchun eng ko'p chegirma (so'm); yo'q bo'lsa cheksiz.
+    max_discount = models.IntegerField(null=True, blank=True)
+    # Umumiy foydalanish limiti; None — cheksiz.
+    usage_limit = models.IntegerField(null=True, blank=True)
+    used_count = models.IntegerField(default=0)
+    active = models.IntegerField(default=1)
+    # Amal qilish muddati (ISO matn); None — muddatsiz.
+    expires_at = models.TextField(null=True, blank=True)
+    created_at = models.TextField()
+
+    class Meta:
+        db_table = "promo_codes"
+        managed = False
+        ordering = ["-id"]

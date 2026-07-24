@@ -80,6 +80,8 @@ urlpatterns = [
     path("products/search/", v.products_search),
     path("products/names/all", v.products_names_all),
     path("products/names/all/", v.products_names_all),
+    path("products/names", v.products_names),
+    path("products/names/", v.products_names),
     path("products/<int:pk>", v.product_detail),
     path("products/<int:pk>/", v.product_detail),
 
@@ -87,6 +89,9 @@ urlpatterns = [
     path("services/", v.services_list),
     path("services/<int:pk>", v.service_detail),
     path("services/<int:pk>/", v.service_detail),
+
+    # Promo codes — public validate (checkout oldidan)
+    path("promo/validate/", v.promo_validate),
 
     # Orders
     path("orders/", v.orders_list),
@@ -113,6 +118,11 @@ urlpatterns = [
     re_path(r"^admin/orders/(?P<pk>[\w\-]+)/?$", v.admin_delete_order),
     path("admin/users/", v.admin_users),
     path("admin/users/<int:pk>/", v.admin_delete_user),
+
+    # Admin — promo codes CRUD
+    path("admin/promo-codes/", v.admin_promo_codes),
+    path("admin/promo-codes/<int:pk>", v.admin_promo_code_detail),
+    path("admin/promo-codes/<int:pk>/", v.admin_promo_code_detail),
 
     # Uploads — admin-only
     path("uploads/image/", v.upload_image),
